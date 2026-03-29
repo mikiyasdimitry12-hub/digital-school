@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Portal - Digital School</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Arial, sans-serif; }
+        
+        body { transition: all 0.3s ease; min-height: 100vh; padding: 20px; }
+        
+        /* 8 Themes */
+        body.theme-black { background: linear-gradient(135deg, #1a1a2e 0%, #0f0f1a 100%); }
+        body.theme-blue { background: linear-gradient(135deg, #2193b0 0%, #6dd5ed 100%); }
+        body.theme-orange { background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%); }
+        body.theme-red { background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%); }
+        body.theme-pink { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
+        body.theme-purple { background: linear-gradient(135deg, #8E2DE2 0%, #4A00E0 100%); }
+        body.theme-gray { background: linear-gradient(135deg, #7f8c8d 0%, #2c3e50 100%); }
+        body.theme-green { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
+        
+        .container { max-width: 1400px; margin: 0 auto; }
+        .card { background: rgba(255,255,255,0.95); border-radius: 20px; padding: 25px; margin-bottom: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
+        body.theme-black .card { background: rgba(30,30,46,0.95); color: #eee; }
+        body.theme-dark .card { background: rgba(30,30,46,0.95); color: #eee; }
+        h2, h3 { margin-bottom: 15px; }
+        input, select, textarea { width: 100%; padding: 12px; margin: 8px 0; border: 2px solid #ddd; border-radius: 10px; font-size: 14px; }
+        button { background: #667eea; color: white; border: none; padding: 12px 20px; border-radius: 10px; cursor: pointer; margin: 5px; transition: transform 0.2s; }
+        button:hover { transform: translateY(-2px); }
+        .delete-btn { background: #e74c3c; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+        th { background: #667eea; color: white; }
+        .toast { position: fixed; bottom: 20px; right: 20px; background: #27ae60; color: white; padding: 15px; border-radius: 10px; display: none; z-index: 1000; }
+        .theme-btn { font-size: 12px; padding: 5px 10px; margin: 2px; }
+        .chat-container { height: 300px; overflow-y: auto; border: 1px solid #ddd; border-radius: 10px; padding: 15px; margin-top: 15px; background: #f9f9f9; }
+        body.theme-black .chat-container { background: #2d2d44; border-color: #444; }
+        .chat-message { margin-bottom: 10px; padding: 8px; border-radius: 10px; }
+        .chat-message.admin { background: #667eea; color: white; }
+        .chat-message.student { background: #27ae60; color: white; }
+        .chat-message.teacher { background: #e67e22; color: white; }
+        .chat-input { display: flex; gap: 10px; margin-top: 10px; }
+        .chat-input input { flex: 1; }
+        .school-badge { background: #27ae60; color: white; padding: 8px 15px; border-radius: 20px; display: inline-block; margin-bottom: 15px; }
+        .logout { background: #95a5a6; float: right; }
+        .nav-buttons { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
+        .theme-selector { display: flex; flex-wrap: wrap; gap: 5px; margin: 10px 0; }
+        .theme-option { width: 30px; height: 30px; border-radius: 50%; cursor: pointer; border: 2px solid white; transition: transform 0.2s; }
+        .theme-option:hover { transform: scale(1.1); }
+        .theme-option.black { background: #1a1a2e; }
+        .theme-option.blue { background: #2193b0; }
+        .theme-option.orange { background: #f39c12; }
+        .theme-option.red { background: #e74c3c; }
+        .theme-option.pink { background: #f5576c; }
+        .theme-option.purple { background: #8E2DE2; }
+        .theme-option.gray { background: #7f8c8d; }
+        .theme-option.green { background: #11998e; }
+    </style>
+</head>
+<body class="theme-green">
+<div class="container" id="app">
+    <div class="card" id="registerScreen">
+        <h2>🏫 School Admin Portal</h2>
+        <p style="color: #666; margin-bottom: 20px;">Register your school or login</p>
+        
+        <h3>Register New School</h3>
+        <input type="text" id="adminName" placeholder="Admin Full Name">
+        <input type="email" id="adminEmail" placeholder="Admin Email">
+        <input type="text" id="schoolCode" placeholder="School Code (unique - students/teachers will use this)">
+        <input type="password" id="adminPassword" placeholder="Password">
+        <button onclick="registerSchool()">Register School</button>
+        
+        <hr style="margin: 20px 0;">
+        
+        <h3>Login to Existing School</h3>
+        <input type="text" id="loginSchoolCode" placeholder="School Code">
+        <input type="password" id="loginPassword" placeholder="Password">
+        <button onclick="loginAdmin()">Login</button>
+    </div>
+</div>
+<div id="toast" class="toast"></div>
+
+<script>
+let token = null;
+let currentSchool = null;
+let currentAdmin = null;
+let schoolData = null;
+let socket = null;
+
+// Theme management
+const themes = ['black', 'blue', 'orange', 'red', 'pink', 'purple', 'gray', 'green'];
+let currentTheme = localStorage.getItem('adminTheme') || 'green';
+
+function applyTheme() {
+    document.body.className = `theme-${currentTheme}`;
+    localStorage.setItem('adminTheme', currentTheme);
+}
+
+function changeTheme(theme) {
+    currentTheme = theme;
+    applyTheme();
+    showToast(`Theme changed to ${theme}`);
+}
+
+function showToast(msg, isError = false) {
+    const toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.style.background = isError ? '#e74c3c' : '#27ae60';
+    toast.style.display = 'block';
+    setTimeout(() => toast.style.display = 'none', 3000);
+}
+
+function initSocket() {
+    socket = io();   // or socket = io(window.location.origin);
+    socket.emit('join-school', currentSchool);
+    socket.on('new-message', (data) => {
+        displayChatMessage(data);
+    });
+}
+
+function displayChatMessage(data) {
+    const chatContainer = document.getElementById('chatMessages');
+    if (chatContainer) {
+        const msgDiv = document.createElement('div');
+        msgDiv.className = `chat-message ${data.senderRole}`;
+        msgDiv.innerHTML = `<strong>${data.sender}</strong> (${data.senderRole}): ${data.message}<br><small>${data.timestamp}</small>`;
+        chatContainer.appendChild(msgDiv);
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+}
+
+async function registerSchool() {
+    const adminName = document.getElementById('adminName').value;
+    const adminEmail = document.getElementById('adminEmail').value;
+    const schoolCode = document.getElementById('schoolCode').value;
+    const password = document.getElementById('adminPassword').value;
+    
+    if (!adminName || !adminEmail || !schoolCode || !password) {
+        showToast('Please fill all fields', true);
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/school/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ adminName, adminEmail, password, schoolCode })
+        });
+        const data = await response.json();
+        
+        if (data.success) {
+            token = data.token;
+            currentSchool = schoolCode;
+            currentAdmin = data.admin;
+            showToast(`School "${schoolCode}" created!`);
+            await loadData();
+            initSocket();
+            showDashboard();
+        } else {
+            showToast(data.message, true);
+        }
+    } catch (error) {
+        showToast('Error connecting to server', true);
+    }
+}
+
+async function loginAdmin() {
+    const schoolCode = document.getElementById('loginSchoolCode').value;
+    const password = document.getElementById('loginPassword').value;
+    
+    try {
+        const response = await fetch('/api/auth/admin/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ schoolCode, password })
+        });
+        const data = await response.json();
+        
+        if (data.success) {
+            token = data.token;
+            currentSchool = schoolCode;
+            currentAdmin = data.admin;
+            showToast(`Welcome back ${currentAdmin.name}!`);
+            await loadData();
+            initSocket();
+            showDashboard();
+        } else {
+            showToast(data.message, true);
+        }
+    } catch (error) {
+        showToast('Error connecting to server', true);
+    }
+}
+
+async function loadData() {
+    const response = await fetch('/api/school/data', {
+        headers: { 'Authorization': `Bearer ${token}` }
+    });
+    schoolData = await response.json();
+}
+
+function showDashboard() {
+    document.getElementById('app').innerHTML = `
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+                <div>
+                    <span class="school-badge">🏫 ${currentSchool}</span>
+                    <span class="school-badge" style="background:#667eea">👨‍💼 ${currentAdmin.name}</span>
+                </div>
+                <div>
+                    <div class="theme-selector">
+                        <div class="theme-option black" onclick="changeTheme('black')" title="Black"></div>
+                        <div class="theme-option blue" onclick="changeTheme('blue')" title="Blue"></div>
+                        <div class="theme-option orange" onclick="changeTheme('orange')" title="Orange"></div>
+                        <div class="theme-option red" onclick="changeTheme('red')" title="Red"></div>
+                        <div class="theme-option pink" onclick="changeTheme('pink')" title="Pink"></div>
+                        <div class="theme-option purple" onclick="changeTheme('purple')" title="Purple"></div>
+                        <div class="theme-option gray" onclick="changeTheme('gray')" title="Gray"></div>
+                        <div class="theme-option green" onclick="changeTheme('green')" title="Green"></div>
+                    </div>
+                    <button class="logout" onclick="logout()">Logout</button>
+                </div>
+            </div>
+            <h2>Admin Dashboard</h2>
+            <div class="nav-buttons">
+                <button onclick="showStudents()">👨‍🎓 Students (${schoolData.students.length})</button>
+                <button onclick="showTeachers()">👩‍🏫 Teachers (${schoolData.teachers.length})</button>
+                <button onclick="showRequests()">📥 Pending (${schoolData.registrationRequests.filter(r=>r.status==='pending').length})</button>
+                <button onclick="showAnnouncements()">📢 Announcements</button>
+                <button onclick="showExams()">📅 Exams</button>
+                <button onclick="showChat()">💬 School Chat</button>
+            </div>
+        </div>
+        <div id="content"></div>
+    `;
+    showStudents();
+}
+
+async function showStudents() {
+    const response = await fetch('/api/admin/students', {
+        headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const students = await response.json();
+    
+    document.getElementById('content').innerHTML = `
+        <div class="card">
+            <h3>📚 Students</h3>
+            <button onclick="showAddStudent()">➕ Add Student</button>
+            <div class="table-container">
+                <table>
+                    <thead><tr><th>ID</th><th>Name</th><th>Email</th><th>Grade</th><th>Action</th></tr></thead>
+                    <tbody>
+                        ${students.map(s => `<tr><td>${s.id}</td><td>${s.name}</td><td>${s.email}</td><td>${s.grade}</td><td><button class="delete-btn" onclick="deleteStudent('${s.id}')">Delete</button></td></tr>`).join('')}
+                        ${students.length === 0 ? '<tr><td colspan="5">No students yet</td></tr>' : ''}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
+function showAddStudent() {
+    document.getElementById('content').innerHTML = `
+        <div class="card">
+            <h3>➕ Add Student</h3>
+            <input type="text" id="id" placeholder="Student ID"><br>
+            <input type="text" id="name" placeholder="Full Name"><br>
+            <input type="email" id="email" placeholder="Email"><br>
+            <input type="text" id="grade" placeholder="Grade"><br>
+            <input type="password" id="password" placeholder="Password"><br>
+            <button onclick="addStudent()">Save</button>
+            <button onclick="showStudents()">Cancel</button>
+        </div>
+    `;
+}
+
+async function addStudent() {
+    const student = {
+        id: document.getElementById('id').value,
+        name: document.getElementById('name').value,
+        email: document.getElementById('email').value,
+        grade: document.getElementById('grade').value,
+        password: document.getElementById('password').value
+    };
+    
+    await fetch('/api/admin/student/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(student)
+    });
+    showToast('Student request sent!');
+    showStudents();
+}
+
+async function deleteStudent(id) {
+    if (confirm('Delete this student?')) {
+        await fetch(`/api/admin/student/${id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } });
+        showToast('Deleted');
+        showStudents();
+    }
+}
+
+async function showTeachers() {
+    const response = await fetch('/api/admin/teachers', {
+        headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const teachers = await response.json();
+    
+    document.getElementById('content').innerHTML = `
+        <div class="card">
+            <h3>👩‍🏫 Teachers</h3>
+            <button onclick="showAddTeacher()">➕ Add Teacher</button>
+            <table>
+                <thead><tr><th>ID</th><th>Name</th><th>Email</th><th>Department</th><th>Action</th></tr></thead>
+                <tbody>
+                    ${teachers.map(t => `<tr><td>${t.id}</td><td>${t.name}</td><td>${t.email}</td><td>${t.department}</td><td><button class="delete-btn" onclick="deleteTeacher('${t.id}')">Delete</button></td></tr>`).join('')}
+                    ${teachers.length === 0 ? '<tr><td colspan="5">No teachers yet</td></tr>' : ''}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
+function showAddTeacher() {
+    document.getElementById('content').innerHTML = `
+        <div class="card">
+            <h3>➕ Add Teacher</h3>
+            <input type="text" id="id" placeholder="Teacher ID"><br>
+            <input type="text" id="name" placeholder="Full Name"><br>
+            <input type="email" id="email" placeholder="Email"><br>
+            <input type="text" id="department" placeholder="Department"><br>
+            <input type="password" id="password" placeholder="Password"><br>
+            <button onclick="addTeacher()">Save</button>
+            <button onclick="showTeachers()">Cancel</button>
+        </div>
+    `;
+}
+
+async function addTeacher() {
+    const teacher = {
+        id: document.getElementById('id').value,
+        name: document.getElementById('name').value,
+        email: document.getElementById('email').value,
+        department: document.getElementById('department').value,
+        password: document.getElementById('password').value
+    };
+    
+    await fetch('/api/admin/teacher/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(teacher)
+    });
+    showToast('Teacher added!');
+    showTeachers();
+}
+
+async function deleteTeacher(id) {
+    if (confirm('Delete this teacher?')) {
+        await fetch(`/api/admin/teacher/${id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } });
+        showToast('Deleted');
+        showTeachers();
+    }
+}
+
+async function showRequests() {
+    const response = await fetch('/api/admin/requests', {
+        headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const requests = await response.json();
+    
+    document.getElementById('content').innerHTML = `
+        <div class="card">
+            <h3>📥 Pending Requests</h3>
+            <table>
+                <thead><tr><th>ID</th><th>Name</th><th>Email</th><th>Grade</th><th>Action</th></tr></thead>
+                <tbody>
+                    ${requests.map(r => `<tr><td>${r.id}</td><td>${r.name}</td><td>${r.email}</td><td>${r.grade}</td><td><button onclick="approve('${r.id}')">Approve</button> <button class="delete-btn" onclick="reject('${r.id}')">Reject</button></td></tr>`).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
+async function approve(id) {
+    await fetch(`/api/admin/approve/${id}`, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
+    showToast('Student approved!');
+    showRequests();
+}
+
+async function reject(id) {
+    await fetch(`/api/admin/reject/${id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } });
+    showToast('Request rejected');
+    showRequests();
+}
+
+async function showAnnouncements() {
+    document.getElementById('content').innerHTML = `
+        <div class="card">
+            <h3>📢 Announcements</h3>
+            <textarea id="text" rows="3" style="width:100%" placeholder="Write announcement..."></textarea><br>
+            <button onclick="postAnnouncement()">Post</button>
+            <hr>
+            <div id="list"></div>
+        </div>
+    `;
+    await loadAnnouncements();
+}
+
+async function postAnnouncement() {
+    const text = document.getElementById('text').value;
+    await fetch('/api/admin/announcement', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ text })
+    });
+    showToast('Posted!');
+    document.getElementById('text').value = '';
+    loadAnnouncements();
+}
+
+async function loadAnnouncements() {
+    const response = await fetch('/api/school/data', { headers: { 'Authorization': `Bearer ${token}` } });
+    const data = await response.json();
+    document.getElementById('list').innerHTML = data.announcements.map(a => `<p><strong>${a.date}</strong><br>${a.text}</p><hr>`).join('');
+}
+
+async function showExams() {
+    document.getElementById('content').innerHTML = `
+        <div class="card">
+            <h3>📅 Exams</h3>
+            <input type="text" id="name" placeholder="Exam Name"><br>
+            <input type="date" id="date"><br>
+            <input type="text" id="subject" placeholder="Subject"><br>
+            <input type="text" id="time" placeholder="Time"><br>
+            <button onclick="addExam()">Add</button>
+            <hr>
+            <div id="list"></div>
+        </div>
+    `;
+    await loadExams();
+}
+
+async function addExam() {
+    const exam = {
+        name: document.getElementById('name').value,
+        date: document.getElementById('date').value,
+        subject: document.getElementById('subject').value,
+        time: document.getElementById('time').value
+    };
+    await fetch('/api/admin/exam', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(exam)
+    });
+    showToast('Exam added!');
+    loadExams();
+}
+
+async function loadExams() {
+    const response = await fetch('/api/school/data', { headers: { 'Authorization': `Bearer ${token}` } });
+    const data = await response.json();
+    document.getElementById('list').innerHTML = `
+        <table><thead><tr><th>Exam</th><th>Date</th><th>Subject</th><th>Time</th></tr></thead>
+        <tbody>${data.examSchedules.map(e => `<tr><td>${e.name}</td><td>${e.date}</td><td>${e.subject}</td><td>${e.time}</td></tr>`).join('')}</tbody></table>
+    `;
+}
+
+function showChat() {
+    document.getElementById('content').innerHTML = `
+        <div class="card">
+            <h3>💬 School Chat</h3>
+            <div id="chatMessages" class="chat-container"></div>
+            <div class="chat-input">
+                <input type="text" id="chatMessage" placeholder="Type your message..." onkeypress="if(event.key==='Enter') sendMessage()">
+                <button onclick="sendMessage()">Send</button>
+            </div>
+        </div>
+    `;
+    loadChatMessages();
+}
+
+async function loadChatMessages() {
+    try {
+        const response = await fetch('/api/chat/messages', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const messages = await response.json();
+        const container = document.getElementById('chatMessages');
+        if (container) {
+            container.innerHTML = '';
+            messages.forEach(msg => {
+                const msgDiv = document.createElement('div');
+                msgDiv.className = `chat-message ${msg.senderRole}`;
+                msgDiv.innerHTML = `<strong>${msg.sender}</strong> (${msg.senderRole}): ${msg.message}<br><small>${msg.timestamp}</small>`;
+                container.appendChild(msgDiv);
+            });
+            container.scrollTop = container.scrollHeight;
+        }
+    } catch (error) {}
+}
+
+function sendMessage() {
+    const messageInput = document.getElementById('chatMessage');
+    const message = messageInput.value.trim();
+    if (!message) return;
+    
+    const chatData = {
+        schoolCode: currentSchool,
+        message: message,
+        sender: currentAdmin.name,
+        senderRole: 'admin',
+        timestamp: new Date().toLocaleString()
+    };
+    
+    socket.emit('send-message', chatData);
+    messageInput.value = '';
+    
+    fetch('/api/chat/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(chatData)
+    }).catch(console.error);
+}
+
+function logout() {
+    token = null;
+    if (socket) socket.disconnect();
+    location.reload();
+}
+
+applyTheme();
+</script>
+</body>
+</html>
